@@ -257,6 +257,9 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         head_src_tokens = torch.cat((head_tokens, src_tokens[:, :-1]), dim=1)
         # B x (n-1 + S-1 + T-1)
         context_tokens = torch.cat((head_src_tokens, prev_output_tokens[:, 1:]), dim=1)
+        # B x (n-1 + S-1 + T-1)
+        context_mask = (1 - context_tokens.eq(self.padding_idx).to(torch.long)).to(x)
+        context_mask = context_mask.unsqueeze(-1)
         # B x (n-1 + S-1 + T-1) x Dim
         context_enc, _ = self.forward_embedding(context_tokens)
 
@@ -304,7 +307,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         # (S-1 + T-1) segments, each segment correspondong to a mask whose dim is the same as context_tokens(add n-1 pad tokens to the head)
         # seg_mask: (S-1 + T-1) x (S-1 + T-1 + n-1)
         # context_enc : # B x (n-1 + S-1 + T-1) x Dim
-        z_features = torch.matmul(seg_mask, context_enc)
+        z_features = torch.matmul(seg_mask, context_enc * context_mask)
         # print(z_features.size())
         # print(z_features.size())
         # z_features: # B x (S-1 + T-1) x dim
