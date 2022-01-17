@@ -131,6 +131,12 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         
         ##################### here #################################
         self.segment_layer = self.build_segment_layer(cfg, no_encoder_attn)
+        self.segment_embedding_matrix = torch.nn.Parameter(
+            torch.Tensor(3, embed_dim, embed_dim)
+        )
+        self.segment_embedding_bias = torch.nn.Parameter(
+            torch.Tensor(embed_dim)
+        )
         # self.segment_attn_layer_norm = LayerNorm(self.embed_dim, export=cfg.export)
         ##################### above ###############################
         self.project_out_dim = (
@@ -367,7 +373,6 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         # B x T x V
         full_out_prob = utils.softmax(logits, dim=-1, onnx_trace=self.onnx_trace)
         seg_full_out_prob = full_out_prob * segment_prob[:, :, 1].unsqueeze(-1)
-
         full_prob = seg_full_out_prob + segment_out_prob
         penal_prob = segment_prob[:, :, 1]
         #penal_full_prob = full_out_prob / torch.exp(segment_prob[:, :, 1].unsqueeze(-1)+1e-7)
