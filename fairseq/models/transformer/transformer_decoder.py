@@ -137,6 +137,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         self.segment_embedding_bias = torch.nn.Parameter(
             torch.Tensor(embed_dim)
         )
+        self.reset_parameters()
         # self.segment_attn_layer_norm = LayerNorm(self.embed_dim, export=cfg.export)
         ##################### above ###############################
         self.project_out_dim = (
@@ -150,19 +151,9 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         if self.output_projection is None:
             self.build_output_projection(cfg, dictionary, embed_tokens)
 
-   ################### below ###############################
-    # def build_segment_attention(self, embed_dim, cfg):
-    #     return MultiheadAttention(
-    #         embed_dim,
-    #         cfg.decoder.attention_heads,
-    #         kdim=cfg.decoder.embed_dim,
-    #         vdim=cfg.decoder.embed_dim,
-    #         dropout=cfg.attention_dropout,
-    #         encoder_decoder_attention=True,
-    #         #q_noise=self.quant_noise,
-    #         #qn_block_size=cfg.quant_noise.pq_block_size,
-    #     )
-    ################## above ##############################
+    def reset_parameters(self):
+        nn.init.xavier_normal_(self.segment_embedding_matrix)
+        nn.init.zeros_(self.segment_embedding_bias)
     
     def build_output_projection(self, cfg, dictionary, embed_tokens):
         if cfg.adaptive_softmax_cutoff is not None:
@@ -263,6 +254,9 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         head_src_tokens = torch.cat((head_tokens, src_tokens[:, :-1]), dim=1)
         # B x (n-1 + S-1 + T-1)
         context_tokens = torch.cat((head_src_tokens, prev_output_tokens[:, 1:]), dim=1)
+         # B x (n-1 + S-1 + T-1)
+        context_mask = (1 - context_tokens.eq(self.padding_idx).to(torch.long)).to(x)
+        context_mask = context_mask.unsqueeze(-1)
         # B x (n-1 + S-1 + T-1) x Dim
         context_enc, _ = self.forward_embedding(context_tokens)
 
@@ -295,17 +289,10 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         seg_x = seg_x.transpose(0, 1)
         # bs x T x (1 + S-1 + T-1)
         p_z_c = weights
-        # print(p_z_c.size())
-        # embedding segment
-        dim1 = context_tokens.size(1) - ngram + 1
-        dim2 = context_tokens.size(1)
-        a= torch.triu(torch.ones([dim1, dim2]), 0).cuda()
-        # print("a: ", a.size())
-        t = torch.tril(torch.ones([dim1, dim2]), ngram-1).cuda()
-        # print("t: ", t.size())
-        seg_mask = a * t
-        seg_mask = seg_mask.to(x)
-        z_features = torch.matmul(seg_mask, context_enc)
+        mask_context_enc = context_enc * context_mask
+        mask_context_enc = mask_context_enc.reshape(-1, p_z_c.size(0), context_enc.size(-1))
+        z_features = torch.conv_tbc(mask_context_enc, self.segment_embedding_matrix, self.segment_embedding_bias)
+        z_features = z_features.reshape(p_z_c.size(0), -1, context_enc.size(-1))
         return z_features, p_z_c, seg_x
 
 
