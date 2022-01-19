@@ -131,7 +131,8 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         
         ##################### here #################################
         self.segment_layer = self.build_segment_layer(cfg, no_encoder_attn)
-        # self.segment_attn_layer_norm = LayerNorm(self.embed_dim, export=cfg.export)
+        self.segment_layer_norm = LayerNorm(self.embed_dim, export=cfg.export)
+        # self.segment_attn_layer_norm = 
         ##################### above ###############################
         self.project_out_dim = (
             Linear(embed_dim, self.output_embed_dim, bias=False)
@@ -308,6 +309,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         # seg_mask: (S-1 + T-1) x (S-1 + T-1 + n-1)
         # context_enc : # B x (n-1 + S-1 + T-1) x Dim
         z_features = torch.matmul(seg_mask, context_enc * context_mask)
+        z_features = self.segment_layer_norm(z_features)
         # print(z_features.size())
         # print(z_features.size())
         # z_features: # B x (S-1 + T-1) x dim
