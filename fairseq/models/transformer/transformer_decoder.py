@@ -132,6 +132,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         ##################### here #################################
         self.segment_layer = self.build_segment_layer(cfg, no_encoder_attn)
         self.segment_layer_norm = LayerNorm(self.embed_dim, export=cfg.export)
+        self.segment_encoder_layer = self.build_segment_encoder_layer(cfg)
         # self.segment_attn_layer_norm = 
         ##################### above ###############################
         self.project_out_dim = (
@@ -193,6 +194,18 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
 
     def build_decoder_layer(self, cfg, no_encoder_attn=False):
         layer = transformer_layer.TransformerDecoderLayerBase(cfg, no_encoder_attn)
+        checkpoint = cfg.checkpoint_activations
+        if checkpoint:
+            offload_to_cpu = cfg.offload_activations
+            layer = checkpoint_wrapper(layer, offload_to_cpu=offload_to_cpu)
+        # if we are checkpointing, enforce that FSDP always wraps the
+        # checkpointed layer, regardless of layer size
+        min_params_to_wrap = cfg.min_params_to_wrap if not checkpoint else 0
+        layer = fsdp_wrap(layer, min_num_params=min_params_to_wrap)
+        return layer
+    
+    def build_segment_encoder_layer(self, cfg):
+        layer = transformer_layer.TransformerEncoderLayerBase(cfg)
         checkpoint = cfg.checkpoint_activations
         if checkpoint:
             offload_to_cpu = cfg.offload_activations
@@ -303,12 +316,27 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         # print("t: ", t.size())
         seg_mask = a * t
         seg_mask = seg_mask.to(x)
-        # print(seg_mask.size())
-        # print(seg_mask)
+        index_matrix = seg_mask.unsqueeze(0).repeat(bs, 1, 1).to(torch.bool).unsqueeze(-1)
+        context_enc = context_enc * (1 - context_mask.type_as(x))
+        # B x seq_len x seq_len
+        extend_context_enc = context_enc.unsqueeze(1).masked_select(index_matrix).reshape(-1, ngram, context_enc.size(-1)).transpose(0, 1)
+        # print(index_matrix.size())
+        # print(context_mask.size())
+        extend_context_mask = context_mask.squeeze(-1).unsqueeze(1).masked_select(index_matrix.squeeze(-1)).reshape(-1, ngram)
+        # B*seq_len x ngram x dim
+        # segs_token_emb = extend_context_enc
+        # segs_token_emb = segs_token_emb
+        # segs_mask = extend_context_mask
+        # print(segs_token_emb.size(0))
+        # print(segs_mask.size())
+        segs_token_emb = self.segment_encoder_layer(extend_context_enc, encoder_padding_mask=extend_context_mask)
+        # print(segs_token_emb.size())
+        segs_token_emb = self.segment_layer_norm(segs_token_emb)
+        z_features = segs_token_emb.transpose(0, 1).reshape(bs, dim1, ngram, context_enc.size(-1)).sum(2)
         # (S-1 + T-1) segments, each segment correspondong to a mask whose dim is the same as context_tokens(add n-1 pad tokens to the head)
         # seg_mask: (S-1 + T-1) x (S-1 + T-1 + n-1)
         # context_enc : # B x (n-1 + S-1 + T-1) x Dim
-        z_features = torch.matmul(seg_mask, context_enc * context_mask)
+        # z_features = torch.matmul(seg_mask, context_enc * context_mask)
         z_features = self.segment_layer_norm(z_features)
         z_features = self.dropout_module(z_features)
         # print(z_features.size())
