@@ -303,18 +303,14 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         # print("t: ", t.size())
         seg_mask = a * t
         seg_mask = seg_mask.to(x)
-        seg_position_embedding = self.embed_positions(context_tokens[:, ngram-1:])
         # print(seg_mask.size())
         # print(seg_mask)
         # (S-1 + T-1) segments, each segment correspondong to a mask whose dim is the same as context_tokens(add n-1 pad tokens to the head)
         # seg_mask: (S-1 + T-1) x (S-1 + T-1 + n-1)
         # context_enc : # B x (n-1 + S-1 + T-1) x Dim
         z_features = torch.matmul(seg_mask, context_enc * context_mask)
-        z_features += seg_position_embedding
         z_features = self.segment_layer_norm(z_features)
         z_features = self.dropout_module(z_features)
-        if self.quant_noise is not None:
-            z_features = self.quant_noise(z_features)
         # print(z_features.size())
         # print(z_features.size())
         # z_features: # B x (S-1 + T-1) x dim
