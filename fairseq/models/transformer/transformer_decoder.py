@@ -272,8 +272,7 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
         # B x (n-1 + S-1 + T-1)
         context_tokens = torch.cat((head_src_tokens, prev_output_tokens[:, 1:]), dim=1)
         # B x (n-1 + S-1 + T-1)
-        context_mask = (1 - context_tokens.eq(self.padding_idx).to(torch.long)).to(x)
-        context_mask = context_mask.unsqueeze(-1)
+        context_mask = (1 - context_tokens.eq(self.padding_idx).unsqueeze(-1).to(torch.long)).to(x)
         # B x (n-1 + S-1 + T-1) x Dim
         context_enc, _ = self.forward_embedding(context_tokens)
 
@@ -303,47 +302,25 @@ class TransformerDecoderBase(FairseqIncrementalDecoder):
             self_attn_padding_mask=self_attn_padding_mask,
             need_attn=True
         )
-        seg_x = seg_x.transpose(0, 1)
-        # bs x T x (1 + S-1 + T-1)
-        p_z_c = weights
         # print(p_z_c.size())
         # embedding segment
         dim1 = context_tokens.size(1) - ngram + 1
         dim2 = context_tokens.size(1)
         a= torch.triu(torch.ones([dim1, dim2]), 0).cuda()
-        # print("a: ", a.size())
         t = torch.tril(torch.ones([dim1, dim2]), ngram-1).cuda()
-        # print("t: ", t.size())
         seg_mask = a * t
         seg_mask = seg_mask.to(x)
-        index_matrix = seg_mask.unsqueeze(0).repeat(bs, 1, 1).to(torch.bool).unsqueeze(-1)
-        context_enc = context_enc * (1 - context_mask.type_as(x))
-        # B x seq_len x seq_len
+        index_matrix = seg_mask.unsqueeze(0).repeat(1, 1, 1).to(torch.bool).unsqueeze(-1)
+ 
+        context_enc *=  (1 - context_mask.type_as(x))
         extend_context_enc = context_enc.unsqueeze(1).masked_select(index_matrix).reshape(-1, ngram, context_enc.size(-1)).transpose(0, 1)
-        # print(index_matrix.size())
-        # print(context_mask.size())
         extend_context_mask = context_mask.squeeze(-1).unsqueeze(1).masked_select(index_matrix.squeeze(-1)).reshape(-1, ngram)
-        # B*seq_len x ngram x dim
-        # segs_token_emb = extend_context_enc
-        # segs_token_emb = segs_token_emb
-        # segs_mask = extend_context_mask
-        # print(segs_token_emb.size(0))
-        # print(segs_mask.size())
         segs_token_emb = self.segment_encoder_layer(extend_context_enc, encoder_padding_mask=extend_context_mask)
-        # print(segs_token_emb.size())
-        segs_token_emb = self.segment_layer_norm(segs_token_emb)
+
         z_features = segs_token_emb.transpose(0, 1).reshape(bs, dim1, ngram, context_enc.size(-1)).sum(2)
-        # (S-1 + T-1) segments, each segment correspondong to a mask whose dim is the same as context_tokens(add n-1 pad tokens to the head)
-        # seg_mask: (S-1 + T-1) x (S-1 + T-1 + n-1)
-        # context_enc : # B x (n-1 + S-1 + T-1) x Dim
-        # z_features = torch.matmul(seg_mask, context_enc * context_mask)
         z_features = self.segment_layer_norm(z_features)
         z_features = self.dropout_module(z_features)
-        # print(z_features.size())
-        # print(z_features.size())
-        # z_features: # B x (S-1 + T-1) x dim
-        # print(z_features.size())
-        return z_features, p_z_c, seg_x
+        return z_features, weights, seg_x.transpose(0, 1)
 
 
 
